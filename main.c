@@ -5,31 +5,47 @@
 #include <string.h>
 #include "tasks.h"
 #include "utils.h"
-#define MAX_LEN (1024*1024)
 
 int byte;
 int rank;
 
-void worker_receive(int num_map_worker, long nbytes, int num_files)
+void worker_receive(char** chars, int num_map_worker, long* file_sizes)
 {
-	long char_per_worker = nbytes / num_map_workers;
-	int remainder = (int)(nbytes % num_map_workers);
 	int size;
 	MPI_Status status;
-	if (rank <= remainder) {
-		size = char_per_worker + 2;
-	}
-	else {
-		size = char_per_worker + 1;
-	}
-	char** chars = (char **)malloc(sizeof(char*) * num_files);
+	chars = (char **)malloc(sizeof(char*) * num_files);
 	for (int idx = 0; idx < num_files; idx++) {
-		char* msg = (char*)malloc(sizeof(char) * MAX_LEN);
-		chars[idx] = msg;
+		long char_per_worker = file_sizes[idx] / num_map_workers;
+		int remainder = (int)(file_sizes[idx] % num_map_workers);
+		if (rank <= remainder) {
+			size = char_per_worker + 2;
+		}
+		else {
+			size = char_per_worker + 1;
+		}
+		chars[idx] = (char*)malloc(size);
 	}
 	for (int idx = 0; idx < num_files; idx++) {
+		long char_per_worker = file_sizes[idx] / num_map_workers;
+		int remainder = (int)(file_sizes[idx] % num_map_workers);
+		if (rank <= remainder) {
+			size = char_per_worker + 2;
+		}
+		else {
+			size = char_per_worker + 1;
+		}
 		MPI_Recv(chars[idx], size, MPI_CHAR, 0, idx, MPI_COMM_WORLD, &status);
 	}
+}
+
+MapTaskOutput* worker_map(MapTaskOutput* map, char** chars, int num_files)
+{
+	char* char_sum = chars[0];
+	for (int i = 1; i < num_files; i++) {
+		strcat(char_sum, " ");
+		strcat(char_sum, chars[i]);
+	}
+	return map(char_sum);
 }
 
 void master_map_distribute(char* file, int num_map_workers, int file_idx, long nbytes)
@@ -49,7 +65,7 @@ void master_map_distribute(char* file, int num_map_workers, int file_idx, long n
 		chars = (char *)malloc(size);
 		memcpy(file, &chars[buffer], size-1);
 		chars[size] = '\0';
-		buffer += size;
+		buffer += (size-1);
 		MPI_Send(chars, size, MPI_CHAR, w, file_idx, MPI_COMM_WORLD); 
 	}
 }
@@ -82,6 +98,7 @@ int main(int argc, char** argv) {
 			map = &map3;
 			break;
 	}
+	long file_sizes[num_files];
 
 	// Distinguish between master, map workers and reduce workers
 	if (rank == 0) {
@@ -89,7 +106,30 @@ int main(int argc, char** argv) {
 		DIR *d = opendir(input_files_dir);
 		struct dirent *dir;
 		char* text;
-		//Read all files in dir and add to text buffer
+
+		// Read all file size and send to worker
+		if (d) {
+			int i = 0;
+			while(i < num_files && (dir = readdir(d)) != NULL) {
+				// Read text file
+				char *filename = dir->d_name;
+				printf("%s\n", filename);
+				FILE *fp = fopen(filename, "r");
+				fseek(fp, 0, SEEK_END);
+				long nbytes = ftell(fp);
+				fseek(fp, 0, SEEK_SET);
+				fclose(fp);
+
+				// Set file size to array
+				file_sizes[i] = nbytes;
+				i++;
+			}
+			closedir(d);
+		}
+		// Broadcast all file sizes to other processes
+		MPI_Bcast(file_sizes, num_files, MPI_LONG, 0, MPI_COMM_WORLD);
+
+		// Read all files in dir and add to text buffer
 		if (d) {
 			int i = 0;
 			while(i < num_files && (dir = readdir(d)) != NULL) {
@@ -106,21 +146,24 @@ int main(int argc, char** argv) {
 
 				// Distribute the file to all workers
 				master_map_distribute(text, num_map_worker, i, nbytes);
-
 				i++;
 			}
 			closedir(d);
 		}
 
-		while(fgets(buffer, CHUNK, fp)) {
-			int worker_num = count % num_map_workers + 1;
-			int tag = count / num_map_worker;
-			MPI_Send(buffer, size, MPI_CHAR, worker_num, tag, MPI_COMM_WORLD);
-			count++;
-		}
 		printf("Rank (%d): This is the master process\n", rank);
 	} else if ((rank >= 1) && (rank <= num_map_workers)) {
 		// TODO: Implement map worker process logic
+		// Receive file sizes array from master
+		MPI_Bcast(file_sizes, num_files, MPI_LONG, 0, MPI_COMM_WORLD);
+
+		// Receive distributed text from master
+		char** chars;
+		worker_receive(chars, num_map_worker, file_sizes);
+
+		// Calculate output
+		MapTaskOutput* map_result = worker_map(*map, chars, num_files);
+
 		printf("Rank (%d): This is a map worker process\n", rank);
 	} else {
 		// TODO: Implement reduce worker process logic
