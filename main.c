@@ -29,12 +29,11 @@ void worker_receive(char** chars, int num_map_worker, long* file_sizes)
 		long char_per_worker = file_sizes[idx] / num_map_workers;
 		int remainder = (int)(file_sizes[idx] % num_map_workers);
 		if (rank <= remainder) {
-			size = char_per_worker + 2;
+			MPI_Recv(chars[idx], char_per_worker+2, MPI_CHAR, 0, idx, MPI_COMM_WORLD, &status);
 		}
 		else {
-			size = char_per_worker + 1;
+			MPI_Recv(chars[idx], char_per_worker+1, MPI_CHAR, 0, idx, MPI_COMM_WORLD, &status);
 		}
-		MPI_Recv(chars[idx], size, MPI_CHAR, 0, idx, MPI_COMM_WORLD, &status);
 	}
 }
 
@@ -64,7 +63,7 @@ void master_map_distribute(char* file, int num_map_workers, int file_idx, long n
 		}
 		chars = (char *)malloc(size);
 		memcpy(file, &chars[buffer], size-1);
-		chars[size] = '\0';
+		chars[size-1] = '\0';
 		buffer += (size-1);
 		MPI_Send(chars, size, MPI_CHAR, w, file_idx, MPI_COMM_WORLD); 
 	}
