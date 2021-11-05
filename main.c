@@ -6,6 +6,8 @@
 #include "tasks.h"
 #include "utils.h"
 
+#define MASTER_ID 0
+
 int byte;
 int rank;
 
@@ -37,7 +39,7 @@ void worker_receive(char **chars, int num_map_workers, long *file_sizes, int num
 void send_map_list(MapTaskOutput *map_result, int *map_list, int num_map_workers, int num_reduce_workers) {
     memset(map_list, 0, num_reduce_workers * sizeof(int));
     for (int i = 0; i < map_result->len; i++) {
-        int red = partition((map_result->kvs)[i].key, num_reduce_workers);
+        int red = partition((map_result->kvs)[i].key, num_reduce_workers); // invoke the partition in the utils
         map_list[red] += (map_result->kvs)[i].val;
     }
     for (int i = 0; i < num_reduce_workers; i++) {
@@ -87,6 +89,8 @@ int main(int argc, char **argv) {
     char *output_file_name = argv[5];
     int map_reduce_task_num = atoi(argv[6]);
 
+    long long before, after; // for recording wall clock time
+
     // Identify the specific map function to use
     MapTaskOutput *(*map)(char *);
     switch (map_reduce_task_num) {
@@ -103,7 +107,7 @@ int main(int argc, char **argv) {
     long file_sizes[num_files];
 
     // Distinguish between master, map workers and reduce workers
-    if (rank == 0) {
+    if (rank == MASTER_ID) {
         // TODO: Implement master process logic
         DIR *d = opendir(input_files_dir);
         struct dirent *dir;
@@ -153,6 +157,8 @@ int main(int argc, char **argv) {
             closedir(d);
         }
 
+        before = MPI_Wtime();
+
         printf("Rank (%d): This is the master process\n", rank);
     } else if ((rank >= 1) && (rank <= num_map_workers)) {
         // TODO: Implement map worker process logic
@@ -183,10 +189,37 @@ int main(int argc, char **argv) {
         int reduce_count[num_map_workers + 1];
         receive_map_list(reduce_count, num_map_workers);
 
+        // Calculate output
+
+
         printf("Rank (%d): This is a reduce worker process\n", rank);
+    }
+
+
+    if (rank == MASTER_ID) {
+        after = MPI_Wtime();
+        printf("It took %1.2f seconds\n", ((float) (after - before)) / 1000000000);
+
+        fclose(filename);
+        FILE *fptr = fopen("output_file_name", "w+");
+        frpintf(fptr, "letters %d\nnumbers %d\nothers %d\n", letter_count, number_count, other_count);
+        fclose(fptr);
     }
 
     //Clean up
     MPI_Finalize();
     return 0;
+}
+
+
+long long wallClockTime() {
+#ifdef __linux__
+    struct timespec tp;
+    clock_gettime(CLOCK_REALTIME, &tp);
+    return (long long)(tp.tv_nsec + (long long)tp.tv_sec * 1000000000ll);
+#else
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (long long) (tv.tv_usec * 1000 + (long long) tv.tv_sec * 1000000000ll);
+#endif
 }
