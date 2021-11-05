@@ -9,7 +9,7 @@
 int byte;
 int rank;
 
-void worker_receive(char** chars, int num_map_worker, long* file_sizes)
+void worker_receive(char** chars, int num_map_workers, long* file_sizes, int num_files)
 {
 	int size;
 	MPI_Status status;
@@ -37,14 +37,24 @@ void worker_receive(char** chars, int num_map_worker, long* file_sizes)
 	}
 }
 
-MapTaskOutput* worker_map(MapTaskOutput* map, char** chars, int num_files)
+void send_map_list(MapTaskOutput* map_result, int* map_list, int num_map_workers, int num_reduce_workers)
 {
-	char* char_sum = chars[0];
-	for (int i = 1; i < num_files; i++) {
-		strcat(char_sum, " ");
-		strcat(char_sum, chars[i]);
+	memset(map_list, 0, num_reduce_workers * sizeof(int));
+	for (int i = 0; i < map_result->len; i++) {
+		int red = partition((map_result->kvs)[i].key, num_reduce_workers);
+		map_list[red] += (map_result->kvs)[i].val;
 	}
-	return map(char_sum);
+	for (int i = 0; i < num_reduce_workers; i++) {
+		MPI_Send(&(map_list[i]), 1, MPI_INT, num_map_workers+i+1, 0, MPI_COMM_WORLD);
+	}
+}
+
+void receive_map_list(int* reduce_count, int num_map_workers)
+{
+	MPI_Status status;
+	for (int i = 1; i <= num_map_workers; i++) {
+		MPI_Recv(&(reduce_count[i]), 1, MPI_INT, i, 0, MPI_COMM_WORLD, &status);
+	}
 }
 
 void master_map_distribute(char* file, int num_map_workers, int file_idx, long nbytes)
@@ -52,7 +62,7 @@ void master_map_distribute(char* file, int num_map_workers, int file_idx, long n
 	long char_per_worker = nbytes / num_map_workers;
 	int remainder = (int)(nbytes % num_map_workers);
 	long buffer = 0;
-	for (int w = 1; i <= num_map_worker; i++) {
+	for (int w = 1; w <= num_map_workers; w++) {
 		char* chars;
 		int size;
 		if (w <= remainder) {
@@ -144,7 +154,7 @@ int main(int argc, char** argv) {
 				fclose(fp);
 
 				// Distribute the file to all workers
-				master_map_distribute(text, num_map_worker, i, nbytes);
+				master_map_distribute(text, num_map_workers, i, nbytes);
 				i++;
 			}
 			closedir(d);
@@ -158,14 +168,28 @@ int main(int argc, char** argv) {
 
 		// Receive distributed text from master
 		char** chars;
-		worker_receive(chars, num_map_worker, file_sizes);
+		worker_receive(chars, num_map_workers, file_sizes, num_files);
 
 		// Calculate output
-		MapTaskOutput* map_result = worker_map(*map, chars, num_files);
+		char* char_sum = chars[0];
+		for (int i = 1; i < num_files; i++) {
+			strcat(char_sum, " ");
+			strcat(char_sum, chars[i]);
+		}
+		MapTaskOutput* map_result = (*map)(char_sum);
+
+		// Send map list to reducer
+		int* map_list;
+		send_map_list(map_result, map_list, num_map_workers, num_reduce_workers);
 
 		printf("Rank (%d): This is a map worker process\n", rank);
 	} else {
 		// TODO: Implement reduce worker process logic
+
+		// Receive map list from map worker
+		int reduce_count[num_map_workers+1];
+		receive_map_list(reduce_count, num_map_workers);
+
 		printf("Rank (%d): This is a reduce worker process\n", rank);
 	}
 
