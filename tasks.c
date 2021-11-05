@@ -10,7 +10,7 @@
  * Note: remember to free the returned MapTaskOutput* with
  * `free_map_task_output`
  * */
-MapTaskOutput* map1(char *file_contents) {
+MapTaskOutput *map1(char *file_contents) {
     int len = strlen(file_contents);
     int num_letters = 0;
     int num_numbers = 0;
@@ -28,11 +28,11 @@ MapTaskOutput* map1(char *file_contents) {
         }
     }
 
-    MapTaskOutput *output = (MapTaskOutput *)malloc(sizeof(MapTaskOutput));
-    KeyValue *kvs = (KeyValue *)malloc(sizeof(KeyValue) * 3);
-    kvs[0] = (KeyValue) { .key="letters", .val=num_letters };
-    kvs[1] = (KeyValue) { .key="numbers", .val=num_numbers };
-    kvs[2] = (KeyValue) { .key="others", .val=num_others };
+    MapTaskOutput *output = (MapTaskOutput *) malloc(sizeof(MapTaskOutput));
+    KeyValue *kvs = (KeyValue *) malloc(sizeof(KeyValue) * 3);
+    kvs[0] = (KeyValue) {.key="letters", .val=num_letters};
+    kvs[1] = (KeyValue) {.key="numbers", .val=num_numbers};
+    kvs[2] = (KeyValue) {.key="others", .val=num_others};
 
     output->len = 3;
     output->kvs = kvs;
@@ -50,10 +50,10 @@ MapTaskOutput* map1(char *file_contents) {
  * Note: remember to free the returned MapTaskOutput* with
  * `free_map_task_output`
  * */
-MapTaskOutput* map2(char *file_contents) {
+MapTaskOutput *map2(char *file_contents) {
     int len = strlen(file_contents);
-    MapTaskOutput *output = (MapTaskOutput *)malloc(sizeof(MapTaskOutput));
-    KeyValue *kvs = (KeyValue *)malloc(sizeof(KeyValue) * 26);
+    MapTaskOutput *output = (MapTaskOutput *) malloc(sizeof(MapTaskOutput));
+    KeyValue *kvs = (KeyValue *) malloc(sizeof(KeyValue) * 26);
 
     output->len = 26;
     output->kvs = kvs;
@@ -64,8 +64,8 @@ MapTaskOutput* map2(char *file_contents) {
         char alphabet[2];
         alphabet[0] = 'a' + i;
         alphabet[1] = '\0';
-        strcpy((kvs+i)->key, alphabet);
-        (kvs+i)->val = 0;
+        strcpy((kvs + i)->key, alphabet);
+        (kvs + i)->val = 0;
     }
 
     // Go through each character in `file_contents`
@@ -73,10 +73,10 @@ MapTaskOutput* map2(char *file_contents) {
         char c = file_contents[i];
         if ((c >= 'A') && (c <= 'Z')) {
             int index = c - 'A';
-            (kvs+index)->val += 1;
+            (kvs + index)->val += 1;
         } else if ((c >= 'a') && (c <= 'z')) {
             int index = c - 'a';
-            (kvs+index)->val += 1;
+            (kvs + index)->val += 1;
         }
     }
 
@@ -95,25 +95,25 @@ MapTaskOutput* map2(char *file_contents) {
  * Note: remember to free the returned MapTaskOutput* with
  * `free_map_task_output`
  * */
-MapTaskOutput* map3(char *file_contents) {
+MapTaskOutput *map3(char *file_contents) {
     int len = strlen(file_contents);
     int count = len % 49;
 
-    MapTaskOutput *output = (MapTaskOutput *)malloc(sizeof(MapTaskOutput));
-    KeyValue *kvs = (KeyValue *)malloc(sizeof(KeyValue) * 4 * count);
+    MapTaskOutput *output = (MapTaskOutput *) malloc(sizeof(MapTaskOutput));
+    KeyValue *kvs = (KeyValue *) malloc(sizeof(KeyValue) * 4 * count);
 
     output->len = 4 * count;
     output->kvs = kvs;
 
     int i;
     for (i = 0; i < 4 * count; i++) {
-        KeyValue *kv = kvs+i;
-        switch(i%4) {
+        KeyValue *kv = kvs + i;
+        switch (i % 4) {
             case 0:
                 strcpy(kv->key, "we");
                 break;
             case 1:
-                strcpy(kv->key,"love");
+                strcpy(kv->key, "love");
                 break;
             case 2:
                 strcpy(kv->key, "cs");
