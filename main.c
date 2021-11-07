@@ -6,8 +6,6 @@
 #include "tasks.h"
 #include "utils.h"
 
-#define MASTER_ID 0
-
 int byte;
 int rank;
 
@@ -39,18 +37,67 @@ void worker_receive(char **chars, int num_map_workers, long *file_sizes, int num
 void send_map_list(MapTaskOutput *map_result, int *map_list, int num_map_workers, int num_reduce_workers) {
     memset(map_list, 0, num_reduce_workers * sizeof(int));
     for (int i = 0; i < map_result->len; i++) {
-        int red = partition((map_result->kvs)[i].key, num_reduce_workers); // invoke the partition in the utils
-        map_list[red] += (map_result->kvs)[i].val;
+        int reduce = partition((map_result->kvs)[i].key, num_reduce_workers);
+        map_list[reduce]++;
     }
+    // Index of current key-val pair
+    int *indices;
+    memset(indices, 0, num_reduce_workers * sizeof(int));
+
+    // All keys mapping to each reduce workers
+    char ***keys = (char ***) malloc(num_reduce_workers * sizeof(char **));
+
+    // All vals mapping to each reduce workers
+    int **vals = (int **) malloc(num_reduce_workers * sizeof(int *));
+
+    for (int i = 0; i < num_reduce_workers; i++) {
+        keys[i] = (char **) malloc(map_list[i] * sizeof(char *));
+        for (int j = 0; j < map_list[i]; j++) {
+            keys[i][j] = (char *) malloc(8 * sizeof(char));
+        }
+        vals[i] = (int *) malloc(map_list[i] * sizeof(int));
+    }
+
+    // Set keys and vals array, update indices when seeing a partition belongs to that reduce worker
+    for (int i = 0; i < map_result->len; i++) {
+        int reduce = partition((map_result->kvs)[i].key, num_reduce_workers);
+        int idx = indices[reduce];
+        keys[reduce][idx] = (map_result->kvs)[i].key;
+        vals[reduce][idx] = (map_result->kvs)[i].val;
+        indices[reduce]++;
+    }
+
     for (int i = 0; i < num_reduce_workers; i++) {
         MPI_Send(&(map_list[i]), 1, MPI_INT, num_map_workers + i + 1, 0, MPI_COMM_WORLD);
     }
+
+    // Send key-val list to reduce workers
+    for (int i = 0; i < num_reduce_workers; i++) {
+        MPI_Send(keys[i], map_list[i], MPI_CHAR, num_map_workers + i + 1, 0, MPI_COMM_WORLD);
+        MPI_Send(vals[i], map_list[i], MPI_INT, num_map_workers + i + 1, 0, MPI_COMM_WORLD);
+    }
 }
 
-void receive_map_list(int *reduce_count, int num_map_workers) {
+void receive_map_list(int *reduce_count, char ***keys, int **vals, int num_map_workers) {
     MPI_Status status;
-    for (int i = 1; i <= num_map_workers; i++) {
-        MPI_Recv(&(reduce_count[i]), 1, MPI_INT, i, 0, MPI_COMM_WORLD, &status);
+    for (int i = 0; i < num_map_workers; i++) {
+        MPI_Recv(&(reduce_count[i]), 1, MPI_INT, i + 1, 0, MPI_COMM_WORLD, &status);
+    }
+
+    keys = (char ***) malloc(num_map_workers * sizeof(char **));
+    vals = (int **) malloc(num_map_workers * sizeof(int *));
+
+    for (int i = 0; i < num_map_workers; i++) {
+        keys[i] = (char **) malloc(reduce_count[i] * sizeof(char *));
+        for (int j = 0; j < reduce_count[i]; j++) {
+            keys[i][j] = (char *) malloc(8 * sizeof(char));
+        }
+        vals[i] = (int *) malloc(reduce_count[i] * sizeof(int));
+    }
+
+    for (int i = 0; i < num_map_workers; i++) {
+        MPI_Recv(keys[i], reduce_count[i], MPI_CHAR, i + 1, 0, MPI_COMM_WORLD, &status);
+        MPI_Recv(vals[i], reduce_count[i], MPI_INT, i + 1, 0, MPI_COMM_WORLD, &status);
     }
 }
 
@@ -89,8 +136,6 @@ int main(int argc, char **argv) {
     char *output_file_name = argv[5];
     int map_reduce_task_num = atoi(argv[6]);
 
-    long long before, after; // for recording wall clock time
-
     // Identify the specific map function to use
     MapTaskOutput *(*map)(char *);
     switch (map_reduce_task_num) {
@@ -107,7 +152,7 @@ int main(int argc, char **argv) {
     long file_sizes[num_files];
 
     // Distinguish between master, map workers and reduce workers
-    if (rank == MASTER_ID) {
+    if (rank == 0) {
         // TODO: Implement master process logic
         DIR *d = opendir(input_files_dir);
         struct dirent *dir;
@@ -157,8 +202,6 @@ int main(int argc, char **argv) {
             closedir(d);
         }
 
-        before = MPI_Wtime();
-
         printf("Rank (%d): This is the master process\n", rank);
     } else if ((rank >= 1) && (rank <= num_map_workers)) {
         // TODO: Implement map worker process logic
@@ -187,10 +230,10 @@ int main(int argc, char **argv) {
 
         // Receive map list from map worker
         int reduce_count[num_map_workers + 1];
-        receive_map_list(reduce_count, num_map_workers);
 
-        // Calculate output
-
+        char ***keys;
+        int **vals;
+        receive_map_list(reduce_count, keys, vals, num_map_workers);
 
         printf("Rank (%d): This is a reduce worker process\n", rank);
     }
@@ -200,10 +243,25 @@ int main(int argc, char **argv) {
         after = MPI_Wtime();
         printf("It took %1.2f seconds\n", ((float) (after - before)) / 1000000000);
 
-        fclose(filename);
-        FILE *fptr = fopen("output_file_name", "w+");
-        frpintf(fptr, "letters %d\nnumbers %d\nothers %d\n", letter_count, number_count, other_count);
-        fclose(fptr);
+        switch (map_reduce_task_num) {
+            case 1:
+                fclose(filename);
+                FILE *fptr1 = fopen(output_file_name, "w+");
+                frpintf(fptr1, "letters %d\nnumbers %d\nothers %d\n", letter_count, number_count, other_count);
+                fclose(fptr1);
+                break;
+            case 2:
+                FILE *fptr2 = fopen(output_file_name, "w+");
+                for (int i = 0; i < 26; i++) {
+                    frpintf(fptr2, "%c %d\n", 97 + i
+                    count[i]
+                    );
+                }
+                fclose(fptr2);
+                break;
+            case 3:
+                break;
+        }
     }
 
     //Clean up
