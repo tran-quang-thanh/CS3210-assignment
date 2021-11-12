@@ -257,9 +257,19 @@ int main(int argc, char **argv) {
     }
     long file_sizes[num_files];
 
+
+    /* init for the MPI struct */
+    const int nitems = 2;
     int block_lengths[2] = {8, 1};
     MPI_Datatype types[2] = {MPI_CHAR, MPI_INT};
+    MPI_Datatype mpi_key_value;
+    MPI_Aint     offsets[2];
 
+    offsets[0] = offsetof(KeyValue, key);
+    offsets[1] = offsetof(KeyValue, val);
+
+    MPI_Type_create_struct(nitems, blocklengths, offsets, types, &mpi_key_value);
+    MPI_Type_commit(&mpi_key_value);
 
 
     // Distinguish between master, map workers and reduce workers
@@ -383,6 +393,7 @@ int main(int argc, char **argv) {
     }
 
     //Clean up
+    MPI_Type_free(&mpi_key_value);
     MPI_Finalize();
     return 0;
 }
