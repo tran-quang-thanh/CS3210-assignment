@@ -4,11 +4,16 @@
 #include <dirent.h>
 #include <string.h>
 #include <stdbool.h>
+#include <time.h>
 #include "tasks.h"
 #include "utils.h"
 
 int byte;
 int rank;
+MPI_Request* send_file_reqs;
+MPI_Status* send_file_stats;
+MPI_Request* recv_file_reqs;
+MPI_Status* recv_file_stats;
 
 void worker_receive(char** chars, int num_map_workers, long* file_sizes, int num_files)
 {
@@ -30,14 +35,16 @@ void worker_receive(char** chars, int num_map_workers, long* file_sizes, int num
 		long char_per_worker = file_sizes[idx] / num_map_workers;
 		int remainder = (int)(file_sizes[idx] % num_map_workers);
 		if (rank <= remainder) {
-			MPI_Recv(chars[idx], char_per_worker+2, MPI_CHAR, 0, idx, MPI_COMM_WORLD, &status);
+			MPI_Irecv(chars[idx], char_per_worker+2, MPI_CHAR, 0, idx, MPI_COMM_WORLD, &recv_file_reqs[idx]);
 		}
 		else {
-			MPI_Recv(chars[idx], char_per_worker+1, MPI_CHAR, 0, idx, MPI_COMM_WORLD, &status);
+			MPI_Irecv(chars[idx], char_per_worker+1, MPI_CHAR, 0, idx, MPI_COMM_WORLD, &recv_file_reqs[idx]);
 		}
+		//MPI_Wait(&recv_file_reqs[idx], &status);
 		//printf("Rank = %d\n", rank);
 		//printf("%s\n", chars[idx]);
 	}
+	MPI_Waitall(num_files, recv_file_reqs, recv_file_stats);
 }
 
 void send_map_list(MapTaskOutput* map_result, int* map_list, int num_map_workers, int num_reduce_workers)
@@ -86,7 +93,7 @@ void send_map_list(MapTaskOutput* map_result, int* map_list, int num_map_workers
 			MPI_Send(keys[i][j], 8, MPI_CHAR, num_map_workers+i+1, 2*i+j+1, MPI_COMM_WORLD);
 		}
 		MPI_Send(vals[i], map_list[i], MPI_INT, num_map_workers+i+1, 2*i+map_list[i]+1, MPI_COMM_WORLD);
-		printf("from = %d, to = %d, size = %d\n", rank, num_map_workers+i+1, map_list[i]);
+		//printf("from = %d, to = %d, size = %d\n", rank, num_map_workers+i+1, map_list[i]);
 		/*
 		for (int j = 0; j < map_list[i]; j++) {
 			printf("%s %d\n", keys[i][j], vals[i][j]);
@@ -109,7 +116,6 @@ void receive_map_list(int* reduce_count, char*** keys, int** vals, int num_map_w
 		}
 		vals[i] = (int*)malloc(reduce_count[i] * sizeof(int));
 	}
-	
 	for (int i = 0; i < num_map_workers; i++) {
 		int reduce_idx = rank - (num_map_workers+1);
 		for (int j = 0; j < reduce_count[i]; j++) {
@@ -189,10 +195,10 @@ void master_map_distribute(char* file, int num_map_workers, int file_idx, long n
 		chars = (char *)malloc(size);
 		memcpy(chars, &file[buffer], size-1);
 		chars[size-1] = '\0';
-		//printf("w = %d\n", w);
+		//printf("send to: w = %d\n", w);
 		//printf("%s\n", chars);
 		buffer += (size-1);
-		MPI_Send(chars, size, MPI_CHAR, w, file_idx, MPI_COMM_WORLD); 
+		MPI_Isend(chars, size, MPI_CHAR, w, file_idx, MPI_COMM_WORLD, &send_file_reqs[num_map_workers * file_idx + w - 1]); 
 	}
 }
 
@@ -265,6 +271,11 @@ int main(int argc, char** argv) {
 	}
 	long file_sizes[num_files];
 
+	send_file_reqs = (MPI_Request *)malloc(num_files*num_map_workers * sizeof(MPI_Request));
+	send_file_stats = (MPI_Status *)malloc(num_files*num_map_workers * sizeof(MPI_Status));
+	recv_file_reqs = (MPI_Request *)malloc(num_files * sizeof(MPI_Request));
+	recv_file_stats = (MPI_Status *)malloc(num_files * sizeof(MPI_Status));
+
 	// Distinguish between master, map workers and reduce workers
 	if (rank == 0) {
 		// TODO: Implement master process logic
@@ -301,9 +312,11 @@ int main(int argc, char** argv) {
 
 		// Broadcast all file sizes to other processes
 		MPI_Bcast(file_sizes, num_files, MPI_LONG, 0, MPI_COMM_WORLD);
+		/*
 		for (int i = 0; i < num_files; i++) {
 			printf("%ld\n", file_sizes[i]);
 		}
+		*/
 
 		// Read all files in dir and add to text buffer
 		if (n) {
@@ -329,6 +342,7 @@ int main(int argc, char** argv) {
 				i++;
 			}
 		}
+		MPI_Waitall(num_files*num_map_workers, send_file_reqs, send_file_stats);
 
 		for (int j = 0; j < n; j++) {
 			free(all_files[j]);
@@ -385,6 +399,7 @@ int main(int argc, char** argv) {
 
 		//printf("Rank (%d): This is a reduce worker process\n", rank);
 	}
+
 
 	//Clean up
 	MPI_Finalize();
